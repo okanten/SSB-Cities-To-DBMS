@@ -96,11 +96,16 @@ for muni in municipalities:
 with open('./postal.tsv', 'wb') as f:
   f.write(postaladdresses.content)
  
+EXCLUDE_MUNI = ["2211", "2100"]
 with open("postal.tsv", "r", encoding="ISO-8859-1") as zipcodes:
   tsv_reader = csv.reader(zipcodes, delimiter="\t")
 
   for row in tsv_reader:
     (zip, name, muni_id, county, cat) = row
+    print(f"Adding {zip} - {name} to db")
+    # Skip Jan Mayen and Longyearbyen because SSB doesn't have it on record
+    if (muni_id in EXCLUDE_MUNI):
+      continue
     with db.atomic() as transaction:
       try:
         postal_address = PostalAddress.create(zip=zip, name=name, municipality=muni_id)      
