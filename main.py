@@ -1,4 +1,5 @@
 import requests
+import csv
 from peewee import *
 from dotenv import load_dotenv
 from os import getenv
@@ -16,6 +17,8 @@ SSB_REGION_KEY = getenv('SSB_REGION_KEY')
 
 SSB_CITY_URL = getenv('SSB_CITY_URL')
 SSB_CITY_KEY = getenv('SSB_CITY_KEY')
+
+BRING_POST = getenv('BRING_POST')
 
 DB_TYPE = getenv('DB_TYPE')
 DB_NAME = getenv('DB_NAME')
@@ -36,7 +39,7 @@ if db is None:
   print("Incorrect DB_TYPE in .env. Exiting...")
   exit(1)
 
-class Region(Model):
+class County(Model):
   code = CharField(primary_key=True, null=False, unique=True)
   name = CharField(null=False)
   
@@ -44,43 +47,68 @@ class Region(Model):
     database = db
 
 
-class City(Model):
+class Municipality(Model):
   code = CharField(primary_key=True, null=False, unique=True) 
-  region = ForeignKeyField(Region, backref='cities')
+  county = ForeignKeyField(County, backref='municipalities')
   name = CharField(null=False)
   
   class Meta:
     database = db
    
+class PostalAddress(Model):
+  zip = CharField(primary_key=True, null=False, unique=True)
+  name = CharField(null=False)
+  municipality = ForeignKeyField(Municipality, backref='postaladdresses')
+  
+  class Meta:
+    database = db
 
 db.connect()
-db.drop_tables([Region, City])
-db.create_tables([Region, City])
+db.drop_tables([County, Municipality, PostalAddress])
+db.create_tables([County, Municipality, PostalAddress])
 
 
-regions = requests.get(SSB_REGION_URL).json().get(SSB_REGION_KEY)
-cities = requests.get(SSB_CITY_URL).json().get(SSB_CITY_KEY)
+counties = requests.get(SSB_REGION_URL).json().get(SSB_REGION_KEY)
+municipalities = requests.get(SSB_CITY_URL).json().get(SSB_CITY_KEY)
+postaladdresses = requests.get(BRING_POST)
 
-for region in regions:
+for county in counties:
   with db.atomic() as transaction:
     try:
-      new_region = Region.create(code=region.get('code'), name=region.get('name'))
+      new_county = County.create(code=county.get('code'), name=county.get('name'))
       transaction.commit()
     except DatabaseError as e:
       transaction.rollback()
       print(e)
       exit(1)
   
-for city in cities:
+for muni in municipalities:
   with db.atomic() as transaction:
     try:
-      region = city.get('code')[:2]
-      new_city = City.create(code=city.get('code'), region=region, name=city.get('name'))
+      county = muni.get('code')[:2]
+      new_muni = Municipality.create(code=muni.get('code'), county=county, name=muni.get('name'))
       transaction.commit()
     except DatabaseError as e:
       transaction.rollback()
       print(e)
       exit(1)
+
+with open('./postal.tsv', 'wb') as f:
+  f.write(postaladdresses.content)
+ 
+with open("postal.tsv", "r", encoding="ISO-8859-1") as zipcodes:
+  tsv_reader = csv.reader(zipcodes, delimiter="\t")
+
+  for row in tsv_reader:
+    (zip, name, muni_id, county, cat) = row
+    with db.atomic() as transaction:
+      try:
+        postal_address = PostalAddress.create(zip=zip, name=name, municipality=muni_id)      
+        transaction.commit()
+      except DatabaseError as e:
+        transaction.rollback()
+        print(e)
+        exit(1)
 
       
 print("Successfully created/updated tables.")
